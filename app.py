@@ -47,6 +47,36 @@ def load_whatsapp_status():
             
     return status_dict, ws_sheet
 
+def load_operations_tracker():
+    client = init_connection()
+    main_sheet = client.open_by_url(SHEET_URL)
+
+    try:
+        # محاولة فتح صفحة الـ Operations Tracker لو موجودة
+        ops_sheet = main_sheet.worksheet("Operations_Tracker")
+    except gspread.exceptions.WorksheetNotFound:
+        # لو مش موجودة، الكود هيكريتها أوتوماتيك!
+        ops_sheet = main_sheet.add_worksheet(title="Operations_Tracker", rows="1000", cols="6")
+        ops_sheet.update(
+            values=[["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]],
+            range_name="A1"
+        )
+
+    records = ops_sheet.get_all_records()
+    ops_dict = {}
+    for r in records:
+        uid = str(r.get("UID", ""))
+        if uid:
+            ops_dict[uid] = {
+                "Attendance": str(r.get("Attendance", "")).strip().lower() == 'true',
+                "Catering": str(r.get("Catering", "")).strip().lower() == 'true',
+                "CV_Attended": str(r.get("CV_Attended", "")).strip().lower() == 'true',
+                "Mock_Attended": str(r.get("Mock_Attended", "")).strip().lower() == 'true',
+                "Mentorship_Attended": str(r.get("Mentorship_Attended", "")),
+            }
+
+    return ops_dict, ops_sheet
+
 # ==========================================
 # 2. دالة جلب البيانات الأساسية من الماستر شيت
 # ==========================================
@@ -266,6 +296,87 @@ try:
                     st.write(f"**Mock Interview:**\n{user_dict.get('Mock interview', 'لم يسجل')}")
                     st.markdown("---")
                     st.write(f"**Mentorship Sessions:**\n{user_dict.get('Mentorship sessions', 'لم يسجل')}")
+
+                # ==========================================
+                # نظام تسجيل العمليات (Operations Tracker)
+                # ==========================================
+                st.markdown("---")
+                st.header("📋 تسجيل العمليات (Operations Tracker)")
+
+                actual_uid = str(user_dict.get('UID', search_uid))
+
+                with st.spinner('جاري مزامنة بيانات العمليات مع جوجل شيتس...'):
+                    ops_dict, ops_sheet = load_operations_tracker()
+
+                current_ops = ops_dict.get(actual_uid, {
+                    "Attendance": False,
+                    "Catering": False,
+                    "CV_Attended": False,
+                    "Mock_Attended": False,
+                    "Mentorship_Attended": ""
+                })
+
+                # استخراج مواضيع الـ Mentorship الخاصة بالطالب من عموده
+                mentorship_raw = user_dict.get('Mentorship sessions', '')
+                student_topics = [t.strip() for t in str(mentorship_raw).split('\n') if t.strip()]
+
+                attended_raw = current_ops.get("Mentorship_Attended", "")
+                attended_topics = [t.strip() for t in attended_raw.split(',') if t.strip()] if attended_raw else []
+
+                with st.form(key=f"ops_form_{actual_uid}"):
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    with col_a:
+                        attendance_val = st.toggle("✅ الحضور (Attendance)", value=current_ops.get("Attendance", False))
+                    with col_b:
+                        catering_val = st.toggle("🍽️ استلام الوجبة (Catering)", value=current_ops.get("Catering", False))
+                    with col_c:
+                        cv_val = st.toggle("📝 حضور CV Screening", value=current_ops.get("CV_Attended", False))
+                    with col_d:
+                        mock_val = st.toggle("🤝 حضور Mock Interview", value=current_ops.get("Mock_Attended", False))
+
+                    st.markdown("#### 💡 مواضيع الـ Mentorship")
+                    selected_mentorship_topics = []
+                    if student_topics:
+                        m_cols = st.columns(min(len(student_topics), 3))
+                        for i, topic in enumerate(student_topics):
+                            with m_cols[i % len(m_cols)]:
+                                checked = st.checkbox(
+                                    topic,
+                                    value=(topic in attended_topics),
+                                    key=f"mentor_{actual_uid}_{i}"
+                                )
+                                if checked:
+                                    selected_mentorship_topics.append(topic)
+                    else:
+                        st.info("لا توجد مواضيع Mentorship مسجلة لهذا الطالب.")
+
+                    submitted = st.form_submit_button("💾 حفظ الحضور والأنشطة")
+
+                if submitted:
+                    ops_dict[actual_uid] = {
+                        "Attendance": attendance_val,
+                        "Catering": catering_val,
+                        "CV_Attended": cv_val,
+                        "Mock_Attended": mock_val,
+                        "Mentorship_Attended": ", ".join(selected_mentorship_topics)
+                    }
+
+                    with st.spinner("جاري حفظ البيانات في Google Sheets..."):
+                        header = ["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
+                        data_to_upload = [header]
+                        for uid, vals in ops_dict.items():
+                            data_to_upload.append([
+                                uid,
+                                str(vals["Attendance"]),
+                                str(vals["Catering"]),
+                                str(vals["CV_Attended"]),
+                                str(vals["Mock_Attended"]),
+                                vals["Mentorship_Attended"],
+                            ])
+                        ops_sheet.clear()
+                        ops_sheet.update(values=data_to_upload, range_name="A1")
+
+                    st.success("✅ تم حفظ بيانات الحضور والأنشطة بنجاح في Google Sheets!")
             else:
                 st.error("❌ لم يتم العثور على أي طالب بهذا الرقم. تأكد من الرقم وحاول مرة أخرى.")
 

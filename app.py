@@ -14,8 +14,10 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tu
 
 @st.cache_resource
 def init_connection():
+    # سحب الـ JSON من الـ Secrets وتحويله
     secret_string = st.secrets["gcp_service_account"]
     creds_dict = json.loads(secret_string)
+    
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -26,28 +28,24 @@ def init_connection():
 def load_whatsapp_status():
     client = init_connection()
     main_sheet = client.open_by_url(SHEET_URL)
+    
     try:
+        # محاولة فتح صفحة الواتساب لو موجودة
         ws_sheet = main_sheet.worksheet("WhatsApp_Status")
     except gspread.exceptions.WorksheetNotFound:
+        # لو مش موجودة، الكود هيكريتها أوتوماتيك!
         ws_sheet = main_sheet.add_worksheet(title="WhatsApp_Status", rows="1000", cols="2")
         ws_sheet.update(values=[["UID", "WhatsApp_Status"]], range_name="A1")
+        
     records = ws_sheet.get_all_records()
-    status_dict = {str(r.get("UID", "")): (str(r.get("WhatsApp_Status", "")).strip().lower() == 'true') for r in records if r.get("UID", "")}
+    status_dict = {}
+    for r in records:
+        uid = str(r.get("UID", ""))
+        status = str(r.get("WhatsApp_Status", "")).strip().lower()
+        if uid:
+            status_dict[uid] = (status == 'true')
+            
     return status_dict, ws_sheet
-
-# دالة جديدة لجلب/إنشاء شيت العمليات
-def load_ops_tracker():
-    client = init_connection()
-    main_sheet = client.open_by_url(SHEET_URL)
-    headers = ["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
-    try:
-        ws_ops = main_sheet.worksheet("Operations_Tracker")
-    except gspread.exceptions.WorksheetNotFound:
-        ws_ops = main_sheet.add_worksheet(title="Operations_Tracker", rows="1000", cols=str(len(headers)))
-        ws_ops.update(values=[headers], range_name="A1")
-    records = ws_ops.get_all_records()
-    ops_dict = {str(r.get("UID", "")): r for r in records if r.get("UID", "")}
-    return ops_dict, ws_ops
 
 # ==========================================
 # 2. دالة جلب البيانات الأساسية من الماستر شيت
@@ -56,79 +54,220 @@ def load_ops_tracker():
 def load_data():
     csv_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1941132713"
     df = pd.read_csv(csv_url, dtype=str)
+    
     if 'Name - First Name' in df.columns and 'Name - Last Name' in df.columns:
         df['Full Name'] = df['Name - First Name'].fillna('') + ' ' + df['Name - Last Name'].fillna('')
     return df
 
 try:
     df = load_data()
+
     def get_unique_elements(column_name):
         if column_name in df.columns:
             items = df[column_name].dropna().str.split('\n').explode().str.strip()
             return sorted(list(items[items != ""].unique()))
         return []
 
+    # ==========================================
+    # القائمة الجانبية (Navigation)
+    # ==========================================
     st.sidebar.title("📌 القائمة الرئيسية")
-    page = st.sidebar.radio("اختر الصفحة:", ["📊 لوحة البيانات (Dashboard)", "📞 قوائم التواصل (Contact Lists)", "🔍 البحث برقم الـ UID"])
+    page = st.sidebar.radio(
+        "اختر الصفحة:",
+        ["📊 لوحة البيانات (Dashboard)", "📞 قوائم التواصل (Contact Lists)", "🔍 البحث برقم الـ UID"]
+    )
     st.sidebar.markdown("---")
 
-    # [باقي كود الداشبورد والكونتاكتس كما هو تماماً دون تغيير]
-    # (تم اختصار الجزء هنا للتركيز على طلبك في الصفحة الثالثة)
+    # ==========================================
+    # الصفحة الأولى: لوحة البيانات الأساسية
+    # ==========================================
     if page == "📊 لوحة البيانات (Dashboard)":
         st.title("📊 لوحة بيانات الإيفينت")
-        # ... الكود الخاص بك كما هو ...
+        st.sidebar.header("🔍 فلاتر الداشبورد")
+        
+        all_univs = sorted(list(df["University"].dropna().unique()))
+        all_depts = sorted(list(df["department"].dropna().unique()))
+        all_years = sorted(list(df["Graduation year"].dropna().unique()))
+        all_activities = get_unique_elements("Activity")
+        all_topics = get_unique_elements("Mentorship sessions")
+        all_cv_windows = get_unique_elements("CV screening time")
+        all_mock_windows = get_unique_elements("Mock interview")
 
-    elif page == "📞 قوائم التواصل (Contact Lists)":
-        st.title("📞 قوائم التواصل")
-        # ... الكود الخاص بك كما هو ...
+        sel_act = st.sidebar.multiselect("النشاط الأساسي", all_activities)
+        sel_topic = st.sidebar.multiselect("نافذة/موضوع Mentorship", all_topics)
+        sel_cv = st.sidebar.multiselect("نافذة CV Screening", all_cv_windows)
+        sel_mock = st.sidebar.multiselect("نافذة Mock Interview", all_mock_windows)
+        sel_univ = st.sidebar.multiselect("الجامعة", all_univs)
+        sel_dept = st.sidebar.multiselect("القسم", all_depts)
+        sel_year = st.sidebar.multiselect("الدفعة", all_years)
+
+        filtered_df = df.copy()
+
+        if sel_univ:
+            filtered_df = filtered_df[filtered_df["University"].isin(sel_univ)]
+        if sel_dept:
+            filtered_df = filtered_df[filtered_df["department"].isin(sel_dept)]
+        if sel_year:
+            filtered_df = filtered_df[filtered_df["Graduation year"].isin(sel_year)]
+        if sel_act:
+            filtered_df = filtered_df[filtered_df['Activity'].fillna('').apply(lambda x: any(item in x for item in sel_act))]
+        if sel_topic:
+            filtered_df = filtered_df[filtered_df['Mentorship sessions'].fillna('').apply(lambda x: any(item in x for item in sel_topic))]
+        if sel_cv:
+            filtered_df = filtered_df[filtered_df['CV screening time'].fillna('').apply(lambda x: any(item in x for item in sel_cv))]
+        if sel_mock:
+            filtered_df = filtered_df[filtered_df['Mock interview'].fillna('').apply(lambda x: any(item in x for item in sel_mock))]
+
+        st.metric(label="👥 إجمالي الحضور الكلي (بناءً على الفلاتر المختارة)", value=len(filtered_df))
+        st.markdown("---")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.subheader("🎯 الحضور في الأنشطة الأساسية")
+            act_counts = filtered_df['Activity'].dropna().str.split('\n').explode().str.strip()
+            act_counts = act_counts[act_counts != ""].value_counts().reset_index()
+            act_counts.columns = ["النشاط", "العدد"]
+            st.dataframe(act_counts, hide_index=True, use_container_width=True)
+
+            st.subheader("🏛️ الحضور من كل قسم")
+            dept_counts = filtered_df['department'].dropna().value_counts().reset_index()
+            dept_counts.columns = ["القسم", "العدد"]
+            st.dataframe(dept_counts, hide_index=True, use_container_width=True)
+
+        with col2:
+            st.subheader("🎓 الحضور من كل جامعة")
+            univ_counts = filtered_df['University'].dropna().value_counts().reset_index()
+            univ_counts.columns = ["الجامعة", "العدد"]
+            st.dataframe(univ_counts, hide_index=True, use_container_width=True)
+
+        with col3:
+            st.subheader("📅 الحضور من كل دفعة")
+            year_counts = filtered_df['Graduation year'].dropna().value_counts().reset_index()
+            year_counts.columns = ["الدفعة", "العدد"]
+            st.dataframe(year_counts, hide_index=True, use_container_width=True)
+
+        st.markdown("---")
+        st.header("⏳ تفاصيل نوافذ الأنشطة (Sessions & Windows)")
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            st.subheader("💡 نوافذ Mentorship")
+            mentor_counts = filtered_df['Mentorship sessions'].dropna().str.split('\n').explode().str.strip()
+            mentor_counts = mentor_counts[mentor_counts != ""].value_counts().reset_index()
+            mentor_counts.columns = ["الموضوع", "العدد"]
+            st.dataframe(mentor_counts, hide_index=True, use_container_width=True)
+
+        with col5:
+            st.subheader("📝 نوافذ CV Screening")
+            cv_counts = filtered_df['CV screening time'].dropna().str.split('\n').explode().str.strip()
+            cv_counts = cv_counts[cv_counts != ""].value_counts().reset_index()
+            cv_counts.columns = ["النافذة", "العدد"]
+            st.dataframe(cv_counts, hide_index=True, use_container_width=True)
+
+        with col6:
+            st.subheader("🤝 نوافذ Mock Interview")
+            mock_counts = filtered_df['Mock interview'].dropna().str.split('\n').explode().str.strip()
+            mock_counts = mock_counts[mock_counts != ""].value_counts().reset_index()
+            mock_counts.columns = ["النافذة", "العدد"]
+            st.dataframe(mock_counts, hide_index=True, use_container_width=True)
 
     # ==========================================
-    # الصفحة الثالثة المعدلة: البحث + العمليات
+    # الصفحة الثانية: قوائم التواصل التفاعلية المربوطة بجوجل
+    # ==========================================
+    elif page == "📞 قوائم التواصل (Contact Lists)":
+        st.title("📞 استخراج قوائم التواصل")
+        st.markdown("اختر النشاط والنافذة. التعديلات هنا تُحفظ تلقائياً في الشيت!")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            activity_type = st.selectbox("اختر النشاط:", ["CV screening", "Mock interview", "Mentorship sessions"])
+            
+        with col2:
+            if activity_type == "CV screening": target_column = "CV screening time"
+            elif activity_type == "Mock interview": target_column = "Mock interview"
+            else: target_column = "Mentorship sessions"
+                
+            options = get_unique_elements(target_column)
+            selected_window = st.selectbox("اختر النافذة الزمنية / الموضوع:", options)
+
+        if selected_window:
+            contact_df = df[df[target_column].fillna('').str.contains(selected_window, regex=False)].copy()
+            st.success(f"تم العثور على {len(contact_df)} شخص.")
+            
+            # جلب حالة الواتساب من جوجل شيتس
+            with st.spinner('جاري مزامنة البيانات مع جوجل شيتس...'):
+                status_dict, ws_sheet = load_whatsapp_status()
+            
+            contact_df['WhatsApp ✅'] = contact_df['UID'].map(lambda uid: status_dict.get(str(uid), False))
+            display_cols = ["UID", "Full Name", "Phone Number", "University", "WhatsApp ✅"]
+            display_cols = [col for col in display_cols if col in contact_df.columns]
+            
+            # جدول تفاعلي للتعديل
+            edited_df = st.data_editor(
+                contact_df[display_cols],
+                hide_index=True,
+                use_container_width=True,
+                disabled=["UID", "Full Name", "Phone Number", "University"], 
+                key=f"editor_{selected_window}"
+            )
+            
+            has_changed = False
+            for index, row in edited_df.iterrows():
+                uid = str(row['UID'])
+                is_in_whatsapp = row['WhatsApp ✅']
+                if status_dict.get(uid, False) != is_in_whatsapp:
+                    status_dict[uid] = is_in_whatsapp
+                    has_changed = True
+                    
+            # لو حصل تغيير، نرفع الداتا الجديدة لجوجل شيتس
+            if has_changed:
+                with st.spinner("جاري حفظ التغييرات في الشيت..."):
+                    # تجهيز البيانات للرفع
+                    data_to_upload = [["UID", "WhatsApp_Status"]] + [[k, str(v)] for k, v in status_dict.items()]
+                    ws_sheet.clear()
+                    ws_sheet.update(values=data_to_upload, range_name="A1")
+                st.success("✅ تم حفظ التغيير بنجاح في Google Sheets!")
+
+    # ==========================================
+    # الصفحة الثالثة: البحث بالـ UID
     # ==========================================
     elif page == "🔍 البحث برقم الـ UID":
         st.title("🔍 البحث في قاعدة البيانات")
-        search_uid = st.text_input("📝 أدخل رقم الـ UID الخاص بالطالب:").strip()
+        search_uid = st.text_input("📝 أدخل رقم الـ UID الخاص بالطالب (مثال: CLN260012):").strip()
         
         if search_uid:
             user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
+            
             if not user_data.empty:
                 st.success("✅ تم العثور على الطالب!")
                 user_dict = user_data.iloc[0].to_dict()
                 
+                # جلب حالة الواتساب من جوجل شيتس
                 status_dict, _ = load_whatsapp_status()
-                ops_dict, ws_ops = load_ops_tracker()
-                user_ops = ops_dict.get(search_uid, {"Attendance": "False", "Catering": "False", "CV_Attended": "False", "Mock_Attended": "False", "Mentorship_Attended": ""})
+                in_whatsapp = "✅ تمت الإضافة" if status_dict.get(search_uid, False) else "❌ لم يتم الإضافة بعد"
 
                 st.subheader(f"👤 بيانات: {user_dict.get('Full Name', 'غير متوفر')}")
                 
-                # إضافة الفورم الجديد
-                with st.form(key="ops_form"):
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        new_att = st.checkbox("✅ الحضور (Attendance)", value=(str(user_ops.get("Attendance")) == 'True'))
-                        new_cat = st.checkbox("🍔 استلام الوجبة (Catering)", value=(str(user_ops.get("Catering")) == 'True'))
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("### 📌 المعلومات الأساسية")
+                    st.write(f"**رقم الهاتف:** {user_dict.get('Phone Number', 'N/A')}")
+                    st.write(f"**الإيميل:** {user_dict.get('Email', 'N/A')}")
+                    st.write(f"**الجامعة:** {user_dict.get('University', 'N/A')}")
+                    st.write(f"**القسم:** {user_dict.get('department', 'N/A')}")
                     
-                    with col_b:
-                        st.markdown("**Mentorship Sessions:**")
-                        mentorship_str = str(user_dict.get('Mentorship sessions', ''))
-                        topics = [t.strip() for t in mentorship_str.split('\n') if t.strip()]
-                        attended_topics = str(user_ops.get("Mentorship_Attended", "")).split(" | ")
-                        selected_topics = [t for t in topics if st.checkbox(t, value=(t in attended_topics))]
-
-                    if st.form_submit_button("💾 حفظ العمليات"):
-                        ops_dict[search_uid] = {
-                            "UID": search_uid,
-                            "Attendance": str(new_att), "Catering": str(new_cat), 
-                            "CV_Attended": "False", "Mock_Attended": "False", 
-                            "Mentorship_Attended": " | ".join(selected_topics)
-                        }
-                        data_to_upload = [["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]] + \
-                                         [[v["UID"], v["Attendance"], v["Catering"], v["CV_Attended"], v["Mock_Attended"], v["Mentorship_Attended"]] for v in ops_dict.values()]
-                        ws_ops.clear()
-                        ws_ops.update(values=data_to_upload, range_name="A1")
-                        st.success("✅ تم حفظ حالة الحضور!")
+                    st.markdown("---")
+                    st.write(f"**حالة جروب الواتساب:** {in_whatsapp}")
+                
+                with col2:
+                    st.markdown("### 🎯 الأنشطة المسجلة")
+                    st.write(f"**CV Screening:**\n{user_dict.get('CV screening time', 'لم يسجل')}")
+                    st.markdown("---")
+                    st.write(f"**Mock Interview:**\n{user_dict.get('Mock interview', 'لم يسجل')}")
+                    st.markdown("---")
+                    st.write(f"**Mentorship Sessions:**\n{user_dict.get('Mentorship sessions', 'لم يسجل')}")
             else:
-                st.error("❌ لم يتم العثور على أي طالب بهذا الرقم.")
+                st.error("❌ لم يتم العثور على أي طالب بهذا الرقم. تأكد من الرقم وحاول مرة أخرى.")
 
 except Exception as e:
-    st.error(f"حدث خطأ. التفاصيل: {e}")
+    st.error(f"حدث خطأ أثناء تحميل البيانات. تأكد من إعدادات الربط أو الرابط. التفاصيل: {e}")

@@ -3,13 +3,12 @@ import pandas as pd
 import json
 import gspread
 from google.oauth2.service_account import Credentials
-from streamlit_qr_reader import st_qr_reader
 
 # إعدادات الصفحة
 st.set_page_config(page_title="Event Management App", layout="wide", page_icon="⚙️")
 
 # ==========================================
-# 1. إعدادات الربط مع Google Sheets API
+# دالة الربط (نفس الكود السابق)
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/edit"
 
@@ -67,72 +66,45 @@ def load_data():
 df = load_data()
 
 # ==========================================
-# القائمة الجانبية
+# الصفحة الثالثة: Check-in (بدون QR)
 # ==========================================
-st.sidebar.title("📌 القائمة الرئيسية")
-page = st.sidebar.radio("اختر الصفحة:", ["📊 Dashboard", "📞 Contacts", "🔍 Check-in & Scan"])
+st.title("📋 استقبال وتسجيل الحضور")
+search_uid = st.text_input("📝 أدخل رقم الـ UID للطالب للبدء:").strip()
 
-# ==========================================
-# الصفحة الأولى: Dashboard
-# ==========================================
-if page == "📊 Dashboard":
-    st.title("📊 لوحة بيانات الإيفينت")
-    # (تم اختصار الفلاتر هنا لتوفير المساحة، يمكنك إضافة فلاتر الكود السابق هنا)
-    st.metric(label="👥 إجمالي الحضور المسجل", value=len(df))
-
-# ==========================================
-# الصفحة الثانية: Contacts
-# ==========================================
-elif page == "📞 Contacts":
-    st.title("📞 قوائم التواصل")
-    # (إضافة كود Contacts من الرد السابق)
-
-# ==========================================
-# الصفحة الثالثة: Check-in & Scan
-# ==========================================
-elif page == "🔍 Check-in & Scan":
-    st.title("📋 استقبال وتسجيل الحضور")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        qr_result = st_qr_reader(key="qr_scanner")
-    
-    search_uid = st.text_input("📝 أدخل UID أو استخدم الماسح:", value=qr_result if qr_result else "").strip()
-    
-    if search_uid:
-        user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
-        if not user_data.empty:
-            st.success("✅ تم العثور على الطالب!")
-            user_dict = user_data.iloc[0].to_dict()
+if search_uid:
+    user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
+    if not user_data.empty:
+        st.success("✅ تم العثور على الطالب!")
+        user_dict = user_data.iloc[0].to_dict()
+        
+        _, _, ops_dict, ws_ops = load_tracking_data()
+        user_ops = ops_dict.get(search_uid, {"Attendance": False, "Catering": False, "CV_Attended": False, "Mock_Attended": False, "Mentorship_Attended": ""})
+        
+        with st.form(key="ops_form"):
+            st.subheader(f"👤 {user_dict.get('Full Name')}")
+            new_att = st.toggle("✅ الحضور (Attendance)", value=user_ops["Attendance"])
+            new_cat = st.toggle("🍔 الوجبة (Catering)", value=user_ops["Catering"])
             
-            whatsapp_dict, _, ops_dict, ws_ops = load_tracking_data()
-            user_ops = ops_dict.get(search_uid, {"Attendance": False, "Catering": False, "CV_Attended": False, "Mock_Attended": False, "Mentorship_Attended": ""})
+            # Mentorship Topics
+            mentorship_str = str(user_dict.get('Mentorship sessions', ''))
+            topics = [t.strip() for t in mentorship_str.split('\n') if t.strip()]
+            attended = user_ops["Mentorship_Attended"].split(" | ")
             
-            with st.form(key="ops_form"):
-                st.subheader(f"👤 {user_dict.get('Full Name')}")
-                new_att = st.toggle("✅ الحضور (Attendance)", value=user_ops["Attendance"])
-                new_cat = st.toggle("🍔 الوجبة (Catering)", value=user_ops["Catering"])
-                
-                # Mentorship Topics
-                mentorship_str = str(user_dict.get('Mentorship sessions', ''))
-                topics = [t.strip() for t in mentorship_str.split('\n') if t.strip()]
-                attended = user_ops["Mentorship_Attended"].split(" | ")
-                
-                selected_topics = []
-                for topic in topics:
-                    if st.checkbox(topic, value=topic in attended):
-                        selected_topics.append(topic)
-                
-                if st.form_submit_button("💾 حفظ"):
-                    ops_dict[search_uid] = {
-                        "Attendance": new_att, "Catering": new_cat, "CV_Attended": False, 
-                        "Mock_Attended": False, "Mentorship_Attended": " | ".join(selected_topics)
-                    }
-                    # تحديث الشيت
-                    ops_headers = ["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
-                    data_to_upload = [ops_headers] + [[k, str(v["Attendance"]), str(v["Catering"]), str(v["CV_Attended"]), str(v["Mock_Attended"]), v["Mentorship_Attended"]] for k, v in ops_dict.items()]
-                    ws_ops.clear()
-                    ws_ops.update(values=data_to_upload, range_name="A1")
-                    st.success("✅ تم الحفظ!")
-        else:
-            st.error("❌ لم يتم العثور على طالب بهذا الـ UID.")
+            selected_topics = []
+            for topic in topics:
+                if st.checkbox(topic, value=topic in attended):
+                    selected_topics.append(topic)
+            
+            if st.form_submit_button("💾 حفظ"):
+                ops_dict[search_uid] = {
+                    "Attendance": new_att, "Catering": new_cat, "CV_Attended": False, 
+                    "Mock_Attended": False, "Mentorship_Attended": " | ".join(selected_topics)
+                }
+                # تحديث الشيت
+                ops_headers = ["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
+                data_to_upload = [ops_headers] + [[k, str(v["Attendance"]), str(v["Catering"]), str(v["CV_Attended"]), str(v["Mock_Attended"]), v["Mentorship_Attended"]] for k, v in ops_dict.items()]
+                ws_ops.clear()
+                ws_ops.update(values=data_to_upload, range_name="A1")
+                st.success("✅ تم الحفظ بنجاح!")
+    else:
+        st.error("❌ لم يتم العثور على طالب بهذا الـ UID.")

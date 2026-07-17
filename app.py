@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # إعدادات الصفحة
-st.set_page_config(page_title="Event Dashboard", layout="wide")
-st.title("📊 لوحة بيانات الإيفينت")
+st.set_page_config(page_title="Event Management App", layout="wide", page_icon="⚙️")
 
 # دالة لجلب البيانات وتحديثها تلقائياً كل 5 دقائق
 @st.cache_data(ttl=300)
@@ -11,6 +10,10 @@ def load_data():
     sheet_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1941132713"
     # قراءة كل الأعمدة كنصوص لمنع تداخل الأرقام
     df = pd.read_csv(sheet_url, dtype=str)
+    
+    # دمج الاسم الأول والأخير في عمود واحد لتسهيل العرض
+    if 'Name - First Name' in df.columns and 'Name - Last Name' in df.columns:
+        df['Full Name'] = df['Name - First Name'].fillna('') + ' ' + df['Name - Last Name'].fillna('')
     return df
 
 try:
@@ -24,107 +27,200 @@ try:
         return []
 
     # ==========================================
-    # 1. إعدادات الفلاتر الجانبية (Sidebar Filters)
+    # القائمة الجانبية للتنقل بين الصفحات (Navigation)
     # ==========================================
-    st.sidebar.header("🔍 الفلاتر")
-    
-    all_univs = sorted(list(df["University"].dropna().unique()))
-    all_depts = sorted(list(df["department"].dropna().unique()))
-    all_years = sorted(list(df["Graduation year"].dropna().unique()))
-    all_activities = get_unique_elements("Activity")
-    all_topics = get_unique_elements("Mentorship sessions")
-    all_cv_windows = get_unique_elements("CV screening time")
-    all_mock_windows = get_unique_elements("Mock interview")
-
-    sel_act = st.sidebar.multiselect("النشاط الأساسي", all_activities)
-    sel_topic = st.sidebar.multiselect("نافذة/موضوع Mentorship", all_topics)
-    sel_cv = st.sidebar.multiselect("نافذة CV Screening", all_cv_windows)
-    sel_mock = st.sidebar.multiselect("نافذة Mock Interview", all_mock_windows)
-    sel_univ = st.sidebar.multiselect("الجامعة", all_univs)
-    sel_dept = st.sidebar.multiselect("القسم", all_depts)
-    sel_year = st.sidebar.multiselect("الدفعة", all_years)
+    st.sidebar.title("📌 القائمة الرئيسية")
+    page = st.sidebar.radio(
+        "اختر الصفحة:",
+        ["📊 لوحة البيانات (Dashboard)", "📞 قوائم التواصل (Contact Lists)", "🔍 البحث برقم الـ UID"]
+    )
+    st.sidebar.markdown("---")
 
     # ==========================================
-    # 2. تطبيق الفلاتر على البيانات
+    # الصفحة الأولى: لوحة البيانات الأساسية
     # ==========================================
-    filtered_df = df.copy()
+    if page == "📊 لوحة البيانات (Dashboard)":
+        st.title("📊 لوحة بيانات الإيفينت")
+        st.sidebar.header("🔍 فلاتر الداشبورد")
+        
+        all_univs = sorted(list(df["University"].dropna().unique()))
+        all_depts = sorted(list(df["department"].dropna().unique()))
+        all_years = sorted(list(df["Graduation year"].dropna().unique()))
+        all_activities = get_unique_elements("Activity")
+        all_topics = get_unique_elements("Mentorship sessions")
+        all_cv_windows = get_unique_elements("CV screening time")
+        all_mock_windows = get_unique_elements("Mock interview")
 
-    if sel_univ:
-        filtered_df = filtered_df[filtered_df["University"].isin(sel_univ)]
-    if sel_dept:
-        filtered_df = filtered_df[filtered_df["department"].isin(sel_dept)]
-    if sel_year:
-        filtered_df = filtered_df[filtered_df["Graduation year"].isin(sel_year)]
-    if sel_act:
-        filtered_df = filtered_df[filtered_df['Activity'].fillna('').apply(lambda x: any(item in x for item in sel_act))]
-    if sel_topic:
-        filtered_df = filtered_df[filtered_df['Mentorship sessions'].fillna('').apply(lambda x: any(item in x for item in sel_topic))]
-    if sel_cv:
-        filtered_df = filtered_df[filtered_df['CV screening time'].fillna('').apply(lambda x: any(item in x for item in sel_cv))]
-    if sel_mock:
-        filtered_df = filtered_df[filtered_df['Mock interview'].fillna('').apply(lambda x: any(item in x for item in sel_mock))]
+        sel_act = st.sidebar.multiselect("النشاط الأساسي", all_activities)
+        sel_topic = st.sidebar.multiselect("نافذة/موضوع Mentorship", all_topics)
+        sel_cv = st.sidebar.multiselect("نافذة CV Screening", all_cv_windows)
+        sel_mock = st.sidebar.multiselect("نافذة Mock Interview", all_mock_windows)
+        sel_univ = st.sidebar.multiselect("الجامعة", all_univs)
+        sel_dept = st.sidebar.multiselect("القسم", all_depts)
+        sel_year = st.sidebar.multiselect("الدفعة", all_years)
+
+        filtered_df = df.copy()
+
+        if sel_univ:
+            filtered_df = filtered_df[filtered_df["University"].isin(sel_univ)]
+        if sel_dept:
+            filtered_df = filtered_df[filtered_df["department"].isin(sel_dept)]
+        if sel_year:
+            filtered_df = filtered_df[filtered_df["Graduation year"].isin(sel_year)]
+        if sel_act:
+            filtered_df = filtered_df[filtered_df['Activity'].fillna('').apply(lambda x: any(item in x for item in sel_act))]
+        if sel_topic:
+            filtered_df = filtered_df[filtered_df['Mentorship sessions'].fillna('').apply(lambda x: any(item in x for item in sel_topic))]
+        if sel_cv:
+            filtered_df = filtered_df[filtered_df['CV screening time'].fillna('').apply(lambda x: any(item in x for item in sel_cv))]
+        if sel_mock:
+            filtered_df = filtered_df[filtered_df['Mock interview'].fillna('').apply(lambda x: any(item in x for item in sel_mock))]
+
+        st.metric(label="👥 إجمالي الحضور الكلي (بناءً على الفلاتر المختارة)", value=len(filtered_df))
+        st.markdown("---")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.subheader("🎯 الحضور في الأنشطة الأساسية")
+            act_counts = filtered_df['Activity'].dropna().str.split('\n').explode().str.strip()
+            act_counts = act_counts[act_counts != ""].value_counts().reset_index()
+            act_counts.columns = ["النشاط", "العدد"]
+            st.dataframe(act_counts, hide_index=True, use_container_width=True)
+
+            st.subheader("🏛️ الحضور من كل قسم")
+            dept_counts = filtered_df['department'].dropna().value_counts().reset_index()
+            dept_counts.columns = ["القسم", "العدد"]
+            st.dataframe(dept_counts, hide_index=True, use_container_width=True)
+
+        with col2:
+            st.subheader("🎓 الحضور من كل جامعة")
+            univ_counts = filtered_df['University'].dropna().value_counts().reset_index()
+            univ_counts.columns = ["الجامعة", "العدد"]
+            st.dataframe(univ_counts, hide_index=True, use_container_width=True)
+
+        with col3:
+            st.subheader("📅 الحضور من كل دفعة")
+            year_counts = filtered_df['Graduation year'].dropna().value_counts().reset_index()
+            year_counts.columns = ["الدفعة", "العدد"]
+            st.dataframe(year_counts, hide_index=True, use_container_width=True)
+
+        st.markdown("---")
+        st.header("⏳ تفاصيل نوافذ الأنشطة (Sessions & Windows)")
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            st.subheader("💡 نوافذ Mentorship")
+            mentor_counts = filtered_df['Mentorship sessions'].dropna().str.split('\n').explode().str.strip()
+            mentor_counts = mentor_counts[mentor_counts != ""].value_counts().reset_index()
+            mentor_counts.columns = ["الموضوع", "العدد"]
+            st.dataframe(mentor_counts, hide_index=True, use_container_width=True)
+
+        with col5:
+            st.subheader("📝 نوافذ CV Screening")
+            cv_counts = filtered_df['CV screening time'].dropna().str.split('\n').explode().str.strip()
+            cv_counts = cv_counts[cv_counts != ""].value_counts().reset_index()
+            cv_counts.columns = ["النافذة", "العدد"]
+            st.dataframe(cv_counts, hide_index=True, use_container_width=True)
+
+        with col6:
+            st.subheader("🤝 نوافذ Mock Interview")
+            mock_counts = filtered_df['Mock interview'].dropna().str.split('\n').explode().str.strip()
+            mock_counts = mock_counts[mock_counts != ""].value_counts().reset_index()
+            mock_counts.columns = ["النافذة", "العدد"]
+            st.dataframe(mock_counts, hide_index=True, use_container_width=True)
 
     # ==========================================
-    # 3. عرض الأرقام والإحصائيات
+    # الصفحة الثانية: قوائم التواصل (Contact Lists)
     # ==========================================
-    
-    # إجمالي الحضور
-    st.metric(label="👥 إجمالي الحضور الكلي (بناءً على الفلاتر المختارة)", value=len(filtered_df))
-    st.markdown("---")
+    elif page == "📞 قوائم التواصل (Contact Lists)":
+        st.title("📞 استخراج قوائم التواصل")
+        st.markdown("اختر النشاط والنافذة لاستخراج أسماء وأرقام هواتف المسجلين.")
 
-    # الصف الأول من الجداول (الأنشطة العامة والجامعات والدفعات)
-    col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # اختيار النشاط
+            activity_type = st.selectbox(
+                "اختر النشاط:",
+                ["CV screening", "Mock interview", "Mentorship sessions"]
+            )
+            
+        with col2:
+            # تحديث الخيارات بناءً على النشاط المختار
+            if activity_type == "CV screening":
+                target_column = "CV screening time"
+                options = get_unique_elements(target_column)
+                selected_window = st.selectbox("اختر النافذة الزمنية:", options)
+                
+            elif activity_type == "Mock interview":
+                target_column = "Mock interview"
+                options = get_unique_elements(target_column)
+                selected_window = st.selectbox("اختر النافذة الزمنية:", options)
+                
+            else:
+                target_column = "Mentorship sessions"
+                options = get_unique_elements(target_column)
+                selected_window = st.selectbox("اختر الموضوع / النافذة:", options)
 
-    with col1:
-        st.subheader("🎯 الحضور في الأنشطة الأساسية")
-        act_counts = filtered_df['Activity'].dropna().str.split('\n').explode().str.strip()
-        act_counts = act_counts[act_counts != ""].value_counts().reset_index()
-        act_counts.columns = ["النشاط", "العدد"]
-        st.dataframe(act_counts, hide_index=True, use_container_width=True)
+        # فلترة البيانات وعرض الجدول
+        if selected_window:
+            # البحث عن النافذة داخل الخلية (لأن الخلية قد تحتوي على أكثر من اختيار)
+            contact_df = df[df[target_column].fillna('').str.contains(selected_window, regex=False)]
+            
+            st.success(f"تم العثور على {len(contact_df)} شخص مسجل في هذه النافذة.")
+            
+            # ترتيب الجدول للعرض
+            display_cols = ["Full Name", "Phone Number", "University", "Graduation year"]
+            # التأكد من وجود الأعمدة قبل عرضها
+            display_cols = [col for col in display_cols if col in contact_df.columns]
+            
+            st.dataframe(contact_df[display_cols], hide_index=True, use_container_width=True)
 
-        st.subheader("🏛️ الحضور من كل قسم")
-        dept_counts = filtered_df['department'].dropna().value_counts().reset_index()
-        dept_counts.columns = ["القسم", "العدد"]
-        st.dataframe(dept_counts, hide_index=True, use_container_width=True)
-
-    with col2:
-        st.subheader("🎓 الحضور من كل جامعة")
-        univ_counts = filtered_df['University'].dropna().value_counts().reset_index()
-        univ_counts.columns = ["الجامعة", "العدد"]
-        st.dataframe(univ_counts, hide_index=True, use_container_width=True)
-
-    with col3:
-        st.subheader("📅 الحضور من كل دفعة")
-        year_counts = filtered_df['Graduation year'].dropna().value_counts().reset_index()
-        year_counts.columns = ["الدفعة", "العدد"]
-        st.dataframe(year_counts, hide_index=True, use_container_width=True)
-
-    st.markdown("---")
-    st.header("⏳ تفاصيل نوافذ الأنشطة (Sessions & Windows)")
-
-    # الصف الثاني من الجداول (تفاصيل النوافذ للأنشطة الثلاثة)
-    col4, col5, col6 = st.columns(3)
-
-    with col4:
-        st.subheader("💡 نوافذ Mentorship")
-        mentor_counts = filtered_df['Mentorship sessions'].dropna().str.split('\n').explode().str.strip()
-        mentor_counts = mentor_counts[mentor_counts != ""].value_counts().reset_index()
-        mentor_counts.columns = ["الموضوع", "العدد"]
-        st.dataframe(mentor_counts, hide_index=True, use_container_width=True)
-
-    with col5:
-        st.subheader("📝 نوافذ CV Screening")
-        cv_counts = filtered_df['CV screening time'].dropna().str.split('\n').explode().str.strip()
-        cv_counts = cv_counts[cv_counts != ""].value_counts().reset_index()
-        cv_counts.columns = ["النافذة", "العدد"]
-        st.dataframe(cv_counts, hide_index=True, use_container_width=True)
-
-    with col6:
-        st.subheader("🤝 نوافذ Mock Interview")
-        mock_counts = filtered_df['Mock interview'].dropna().str.split('\n').explode().str.strip()
-        mock_counts = mock_counts[mock_counts != ""].value_counts().reset_index()
-        mock_counts.columns = ["النافذة", "العدد"]
-        st.dataframe(mock_counts, hide_index=True, use_container_width=True)
+    # ==========================================
+    # الصفحة الثالثة: البحث بالـ UID
+    # ==========================================
+    elif page == "🔍 البحث برقم الـ UID":
+        st.title("🔍 البحث في قاعدة البيانات")
+        
+        search_uid = st.text_input("📝 أدخل رقم الـ UID الخاص بالطالب (مثال: CLN260012):").strip()
+        
+        if search_uid:
+            # البحث عن الـ UID (مع تجاهل حالة الأحرف لو كانت إنجليزي)
+            user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
+            
+            if not user_data.empty:
+                st.success("✅ تم العثور على الطالب!")
+                
+                # أخذ بيانات أول نتيجة مطابقة
+                user_dict = user_data.iloc[0].to_dict()
+                
+                # عرض البيانات في كروت مرتبة
+                st.subheader(f"👤 بيانات: {user_dict.get('Full Name', 'غير متوفر')}")
+                
+                # تقسيم العرض لعمودين لشكل جمالي
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### 📌 المعلومات الأساسية")
+                    st.write(f"**رقم الهاتف:** {user_dict.get('Phone Number', 'N/A')}")
+                    st.write(f"**الإيميل:** {user_dict.get('Email', 'N/A')}")
+                    st.write(f"**الجامعة:** {user_dict.get('University', 'N/A')}")
+                    st.write(f"**القسم:** {user_dict.get('department', 'N/A')}")
+                    st.write(f"**سنة التخرج:** {user_dict.get('Graduation year', 'N/A')}")
+                
+                with col2:
+                    st.markdown("### 🎯 الأنشطة المسجلة")
+                    st.write(f"**CV Screening:**\n{user_dict.get('CV screening time', 'لم يسجل')}")
+                    st.markdown("---")
+                    st.write(f"**Mock Interview:**\n{user_dict.get('Mock interview', 'لم يسجل')}")
+                    st.markdown("---")
+                    st.write(f"**Mentorship Sessions:**\n{user_dict.get('Mentorship sessions', 'لم يسجل')}")
+                    
+                # عرض باقي الأعمدة كجدول إضافي لو حابب تشوف كل التفاصيل
+                with st.expander("عرض كل البيانات الخام (Raw Data)"):
+                    st.json(user_dict)
+            else:
+                st.error("❌ لم يتم العثور على أي طالب بهذا الرقم. تأكد من الرقم وحاول مرة أخرى.")
 
 except Exception as e:
     st.error(f"حدث خطأ أثناء تحميل البيانات. يرجى التأكد من الرابط. التفاصيل: {e}")

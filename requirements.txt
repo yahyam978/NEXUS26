@@ -2,4 +2,3 @@ streamlit
 pandas
 gspread
 google-auth
-streamlit-qr-reader==0.0.3

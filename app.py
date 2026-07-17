@@ -1,17 +1,60 @@
 import streamlit as st
 import pandas as pd
+import json
+import gspread
+from google.oauth2.service_account import Credentials
 
 # إعدادات الصفحة
 st.set_page_config(page_title="Event Management App", layout="wide", page_icon="⚙️")
 
-# دالة لجلب البيانات وتحديثها تلقائياً كل 5 دقائق
+# ==========================================
+# 1. إعدادات الربط مع Google Sheets API
+# ==========================================
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/edit"
+
+@st.cache_resource
+def init_connection():
+    # سحب الـ JSON من الـ Secrets وتحويله
+    secret_string = st.secrets["gcp_service_account"]
+    creds_dict = json.loads(secret_string)
+    
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(creds)
+
+def load_whatsapp_status():
+    client = init_connection()
+    main_sheet = client.open_by_url(SHEET_URL)
+    
+    try:
+        # محاولة فتح صفحة الواتساب لو موجودة
+        ws_sheet = main_sheet.worksheet("WhatsApp_Status")
+    except gspread.exceptions.WorksheetNotFound:
+        # لو مش موجودة، الكود هيكريتها أوتوماتيك!
+        ws_sheet = main_sheet.add_worksheet(title="WhatsApp_Status", rows="1000", cols="2")
+        ws_sheet.update(values=[["UID", "WhatsApp_Status"]], range_name="A1")
+        
+    records = ws_sheet.get_all_records()
+    status_dict = {}
+    for r in records:
+        uid = str(r.get("UID", ""))
+        status = str(r.get("WhatsApp_Status", "")).strip().lower()
+        if uid:
+            status_dict[uid] = (status == 'true')
+            
+    return status_dict, ws_sheet
+
+# ==========================================
+# 2. دالة جلب البيانات الأساسية من الماستر شيت
+# ==========================================
 @st.cache_data(ttl=300)
 def load_data():
-    sheet_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1941132713"
-    # قراءة كل الأعمدة كنصوص لمنع تداخل الأرقام
-    df = pd.read_csv(sheet_url, dtype=str)
+    csv_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1941132713"
+    df = pd.read_csv(csv_url, dtype=str)
     
-    # دمج الاسم الأول والأخير في عمود واحد لتسهيل العرض
     if 'Name - First Name' in df.columns and 'Name - Last Name' in df.columns:
         df['Full Name'] = df['Name - First Name'].fillna('') + ' ' + df['Name - Last Name'].fillna('')
     return df
@@ -19,7 +62,6 @@ def load_data():
 try:
     df = load_data()
 
-    # دالة مساعدة لتنظيف الخلايا التي تحتوي على أكثر من اختيار
     def get_unique_elements(column_name):
         if column_name in df.columns:
             items = df[column_name].dropna().str.split('\n').explode().str.strip()
@@ -27,7 +69,7 @@ try:
         return []
 
     # ==========================================
-    # القائمة الجانبية للتنقل بين الصفحات (Navigation)
+    # القائمة الجانبية (Navigation)
     # ==========================================
     st.sidebar.title("📌 القائمة الرئيسية")
     page = st.sidebar.radio(
@@ -130,83 +172,92 @@ try:
             st.dataframe(mock_counts, hide_index=True, use_container_width=True)
 
     # ==========================================
-    # الصفحة الثانية: قوائم التواصل (Contact Lists)
+    # الصفحة الثانية: قوائم التواصل التفاعلية المربوطة بجوجل
     # ==========================================
     elif page == "📞 قوائم التواصل (Contact Lists)":
         st.title("📞 استخراج قوائم التواصل")
-        st.markdown("اختر النشاط والنافذة لاستخراج أسماء وأرقام هواتف المسجلين.")
+        st.markdown("اختر النشاط والنافذة. التعديلات هنا تُحفظ تلقائياً في الشيت!")
 
         col1, col2 = st.columns(2)
-        
         with col1:
-            # اختيار النشاط
-            activity_type = st.selectbox(
-                "اختر النشاط:",
-                ["CV screening", "Mock interview", "Mentorship sessions"]
-            )
+            activity_type = st.selectbox("اختر النشاط:", ["CV screening", "Mock interview", "Mentorship sessions"])
             
         with col2:
-            # تحديث الخيارات بناءً على النشاط المختار
-            if activity_type == "CV screening":
-                target_column = "CV screening time"
-                options = get_unique_elements(target_column)
-                selected_window = st.selectbox("اختر النافذة الزمنية:", options)
+            if activity_type == "CV screening": target_column = "CV screening time"
+            elif activity_type == "Mock interview": target_column = "Mock interview"
+            else: target_column = "Mentorship sessions"
                 
-            elif activity_type == "Mock interview":
-                target_column = "Mock interview"
-                options = get_unique_elements(target_column)
-                selected_window = st.selectbox("اختر النافذة الزمنية:", options)
-                
-            else:
-                target_column = "Mentorship sessions"
-                options = get_unique_elements(target_column)
-                selected_window = st.selectbox("اختر الموضوع / النافذة:", options)
+            options = get_unique_elements(target_column)
+            selected_window = st.selectbox("اختر النافذة الزمنية / الموضوع:", options)
 
-        # فلترة البيانات وعرض الجدول
         if selected_window:
-            # البحث عن النافذة داخل الخلية (لأن الخلية قد تحتوي على أكثر من اختيار)
-            contact_df = df[df[target_column].fillna('').str.contains(selected_window, regex=False)]
+            contact_df = df[df[target_column].fillna('').str.contains(selected_window, regex=False)].copy()
+            st.success(f"تم العثور على {len(contact_df)} شخص.")
             
-            st.success(f"تم العثور على {len(contact_df)} شخص مسجل في هذه النافذة.")
+            # جلب حالة الواتساب من جوجل شيتس
+            with st.spinner('جاري مزامنة البيانات مع جوجل شيتس...'):
+                status_dict, ws_sheet = load_whatsapp_status()
             
-            # ترتيب الجدول للعرض
-            display_cols = ["Full Name", "Phone Number", "University", "Graduation year"]
-            # التأكد من وجود الأعمدة قبل عرضها
+            contact_df['WhatsApp ✅'] = contact_df['UID'].map(lambda uid: status_dict.get(str(uid), False))
+            display_cols = ["UID", "Full Name", "Phone Number", "University", "WhatsApp ✅"]
             display_cols = [col for col in display_cols if col in contact_df.columns]
             
-            st.dataframe(contact_df[display_cols], hide_index=True, use_container_width=True)
+            # جدول تفاعلي للتعديل
+            edited_df = st.data_editor(
+                contact_df[display_cols],
+                hide_index=True,
+                use_container_width=True,
+                disabled=["UID", "Full Name", "Phone Number", "University"], 
+                key=f"editor_{selected_window}"
+            )
+            
+            has_changed = False
+            for index, row in edited_df.iterrows():
+                uid = str(row['UID'])
+                is_in_whatsapp = row['WhatsApp ✅']
+                if status_dict.get(uid, False) != is_in_whatsapp:
+                    status_dict[uid] = is_in_whatsapp
+                    has_changed = True
+                    
+            # لو حصل تغيير، نرفع الداتا الجديدة لجوجل شيتس
+            if has_changed:
+                with st.spinner("جاري حفظ التغييرات في الشيت..."):
+                    # تجهيز البيانات للرفع
+                    data_to_upload = [["UID", "WhatsApp_Status"]] + [[k, str(v)] for k, v in status_dict.items()]
+                    ws_sheet.clear()
+                    ws_sheet.update(values=data_to_upload, range_name="A1")
+                st.success("✅ تم حفظ التغيير بنجاح في Google Sheets!")
 
     # ==========================================
     # الصفحة الثالثة: البحث بالـ UID
     # ==========================================
     elif page == "🔍 البحث برقم الـ UID":
         st.title("🔍 البحث في قاعدة البيانات")
-        
         search_uid = st.text_input("📝 أدخل رقم الـ UID الخاص بالطالب (مثال: CLN260012):").strip()
         
         if search_uid:
-            # البحث عن الـ UID (مع تجاهل حالة الأحرف لو كانت إنجليزي)
             user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
             
             if not user_data.empty:
                 st.success("✅ تم العثور على الطالب!")
-                
-                # أخذ بيانات أول نتيجة مطابقة
                 user_dict = user_data.iloc[0].to_dict()
                 
-                # عرض البيانات في كروت مرتبة
+                # جلب حالة الواتساب من جوجل شيتس
+                status_dict, _ = load_whatsapp_status()
+                in_whatsapp = "✅ تمت الإضافة" if status_dict.get(search_uid, False) else "❌ لم يتم الإضافة بعد"
+
                 st.subheader(f"👤 بيانات: {user_dict.get('Full Name', 'غير متوفر')}")
                 
-                # تقسيم العرض لعمودين لشكل جمالي
                 col1, col2 = st.columns(2)
-                
                 with col1:
                     st.markdown("### 📌 المعلومات الأساسية")
                     st.write(f"**رقم الهاتف:** {user_dict.get('Phone Number', 'N/A')}")
                     st.write(f"**الإيميل:** {user_dict.get('Email', 'N/A')}")
                     st.write(f"**الجامعة:** {user_dict.get('University', 'N/A')}")
                     st.write(f"**القسم:** {user_dict.get('department', 'N/A')}")
-                    st.write(f"**سنة التخرج:** {user_dict.get('Graduation year', 'N/A')}")
+                    
+                    st.markdown("---")
+                    st.write(f"**حالة جروب الواتساب:** {in_whatsapp}")
                 
                 with col2:
                     st.markdown("### 🎯 الأنشطة المسجلة")
@@ -215,12 +266,8 @@ try:
                     st.write(f"**Mock Interview:**\n{user_dict.get('Mock interview', 'لم يسجل')}")
                     st.markdown("---")
                     st.write(f"**Mentorship Sessions:**\n{user_dict.get('Mentorship sessions', 'لم يسجل')}")
-                    
-                # عرض باقي الأعمدة كجدول إضافي لو حابب تشوف كل التفاصيل
-                with st.expander("عرض كل البيانات الخام (Raw Data)"):
-                    st.json(user_dict)
             else:
                 st.error("❌ لم يتم العثور على أي طالب بهذا الرقم. تأكد من الرقم وحاول مرة أخرى.")
 
 except Exception as e:
-    st.error(f"حدث خطأ أثناء تحميل البيانات. يرجى التأكد من الرابط. التفاصيل: {e}")
+    st.error(f"حدث خطأ أثناء تحميل البيانات. تأكد من إعدادات الربط أو الرابط. التفاصيل: {e}")

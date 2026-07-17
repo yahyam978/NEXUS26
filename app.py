@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 import gspread
+import numpy as np
+import cv2
 from google.oauth2.service_account import Credentials
 
 # إعدادات الصفحة
@@ -263,8 +265,40 @@ try:
     # ==========================================
     elif page == "🔍 البحث برقم الـ UID":
         st.title("🔍 البحث في قاعدة البيانات")
-        search_uid = st.text_input("📝 أدخل رقم الـ UID الخاص بالطالب (مثال: CLN260012):").strip()
-        
+
+        # ==========================================
+        # مسح كود QR كبديل للكتابة اليدوية
+        # ==========================================
+        if "scanned_uid" not in st.session_state:
+            st.session_state.scanned_uid = ""
+        if "uid_search_input" not in st.session_state:
+            st.session_state.uid_search_input = ""
+
+        with st.expander("📷 مسح كود QR الخاص بالطالب (بدلاً من الكتابة اليدوية)"):
+            qr_image = st.camera_input("وجّه الكاميرا نحو كود الـ QR", key="qr_camera_input")
+
+            if qr_image is not None:
+                file_bytes = np.frombuffer(qr_image.getvalue(), np.uint8)
+                cv_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                detector = cv2.QRCodeDetector()
+                data, points, _ = detector.detectAndDecode(cv_img)
+
+                if data:
+                    st.session_state.scanned_uid = data.strip()
+                    st.success(f"✅ تم التعرف على الكود: {data.strip()}")
+                else:
+                    st.warning("⚠️ لم يتم العثور على كود QR واضح في الصورة، حاول مرة أخرى بإضاءة أفضل وزاوية أقرب.")
+
+        # لو تم مسح كود جديد بنجاح، نحدّث خانة البحث تلقائياً
+        if st.session_state.scanned_uid:
+            st.session_state.uid_search_input = st.session_state.scanned_uid
+            st.session_state.scanned_uid = ""  # نصفّرها عشان مايكررش التحديث كل مرة
+
+        search_uid = st.text_input(
+            "📝 أدخل رقم الـ UID الخاص بالطالب (مثال: CLN260012):",
+            key="uid_search_input"
+        ).strip()
+
         if search_uid:
             user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
             

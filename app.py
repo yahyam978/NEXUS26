@@ -49,18 +49,20 @@ def load_whatsapp_status():
             
     return status_dict, ws_sheet
 
-def load_operations_tracker():
+def load_operations_tracker(df_main):
     client = init_connection()
     main_sheet = client.open_by_url(SHEET_URL)
+
+    headers = ["Tracker_ID", "UID", "Name", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
 
     try:
         # محاولة فتح صفحة الـ Operations Tracker لو موجودة
         ops_sheet = main_sheet.worksheet("Operations_Tracker")
     except gspread.exceptions.WorksheetNotFound:
         # لو مش موجودة، الكود هيكريتها أوتوماتيك!
-        ops_sheet = main_sheet.add_worksheet(title="Operations_Tracker", rows="1000", cols="6")
+        ops_sheet = main_sheet.add_worksheet(title="Operations_Tracker", rows="1000", cols=str(len(headers)))
         ops_sheet.update(
-            values=[["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]],
+            values=[headers],
             range_name="A1"
         )
 
@@ -68,14 +70,29 @@ def load_operations_tracker():
     ops_dict = {}
     for r in records:
         uid = str(r.get("UID", ""))
-        if uid:
-            ops_dict[uid] = {
-                "Attendance": str(r.get("Attendance", "")).strip().lower() == 'true',
-                "Catering": str(r.get("Catering", "")).strip().lower() == 'true',
-                "CV_Attended": str(r.get("CV_Attended", "")).strip().lower() == 'true',
-                "Mock_Attended": str(r.get("Mock_Attended", "")).strip().lower() == 'true',
-                "Mentorship_Attended": str(r.get("Mentorship_Attended", "")),
-            }
+        if not uid: continue
+        
+        # حماية الداتا القديمة وتحديثها
+        name = str(r.get("Name", ""))
+        if not name:
+            matched_user = df_main[df_main['UID'].fillna('').str.lower() == uid.lower()]
+            if not matched_user.empty:
+                name = matched_user.iloc[0]['Full Name']
+                
+        tracker_id = str(r.get("Tracker_ID", ""))
+        if not tracker_id:
+            tracker_id = f"{uid}_{name}"
+
+        ops_dict[tracker_id] = {
+            "Tracker_ID": tracker_id,
+            "UID": uid,
+            "Name": name,
+            "Attendance": str(r.get("Attendance", "")).strip().lower() == 'true',
+            "Catering": str(r.get("Catering", "")).strip().lower() == 'true',
+            "CV_Attended": str(r.get("CV_Attended", "")).strip().lower() == 'true',
+            "Mock_Attended": str(r.get("Mock_Attended", "")).strip().lower() == 'true',
+            "Mentorship_Attended": str(r.get("Mentorship_Attended", "")),
+        }
 
     return ops_dict, ops_sheet
 
@@ -84,7 +101,8 @@ def load_operations_tracker():
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
-    csv_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1941132713"
+    # تم تحديث الـ gid هنا
+    csv_url = "https://docs.google.com/spreadsheets/d/1TOCfWjjMPwNRk-2U1dPMB0XG_tuXnDh_MVKvU-FUqrU/export?format=csv&gid=1157487746"
     df = pd.read_csv(csv_url, dtype=str)
     
     if 'Name - First Name' in df.columns and 'Name - Last Name' in df.columns:
@@ -303,14 +321,26 @@ try:
             user_data = df[df['UID'].fillna('').str.lower() == search_uid.lower()]
             
             if not user_data.empty:
-                st.success("✅ تم العثور على الطالب!")
-                user_dict = user_data.iloc[0].to_dict()
+                # ==========================================
+                # تعديل: التعامل مع الأرقام المكررة
+                # ==========================================
+                if len(user_data) > 1:
+                    st.warning("⚠️ تنبيه: هذا الرقم مكرر! برجاء اختيار الطالب الصحيح:")
+                    selected_name = st.selectbox("اختر اسم الطالب الذي أمامك:", user_data['Full Name'].tolist())
+                    user_dict = user_data[user_data['Full Name'] == selected_name].iloc[0].to_dict()
+                else:
+                    st.success("✅ تم العثور على الطالب!")
+                    user_dict = user_data.iloc[0].to_dict()
                 
+                actual_uid = str(user_dict.get('UID', search_uid))
+                current_name = user_dict.get('Full Name', '')
+                unique_tracker_id = f"{actual_uid}_{current_name}" # إنشاء ID مركب
+
                 # جلب حالة الواتساب من جوجل شيتس
                 status_dict, _ = load_whatsapp_status()
-                in_whatsapp = "✅ تمت الإضافة" if status_dict.get(search_uid, False) else "❌ لم يتم الإضافة بعد"
+                in_whatsapp = "✅ تمت الإضافة" if status_dict.get(actual_uid, False) else "❌ لم يتم الإضافة بعد"
 
-                st.subheader(f"👤 بيانات: {user_dict.get('Full Name', 'غير متوفر')}")
+                st.subheader(f"👤 بيانات: {current_name}")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -332,17 +362,18 @@ try:
                     st.write(f"**Mentorship Sessions:**\n{user_dict.get('Mentorship sessions', 'لم يسجل')}")
 
                 # ==========================================
-                # نظام تسجيل العمليات (Operations Tracker)
+                # نظام تسجيل العمليات (Operations Tracker) المعدل
                 # ==========================================
                 st.markdown("---")
                 st.header("📋 تسجيل العمليات (Operations Tracker)")
 
-                actual_uid = str(user_dict.get('UID', search_uid))
-
                 with st.spinner('جاري مزامنة بيانات العمليات مع جوجل شيتس...'):
-                    ops_dict, ops_sheet = load_operations_tracker()
+                    ops_dict, ops_sheet = load_operations_tracker(df)
 
-                current_ops = ops_dict.get(actual_uid, {
+                current_ops = ops_dict.get(unique_tracker_id, {
+                    "Tracker_ID": unique_tracker_id,
+                    "UID": actual_uid,
+                    "Name": current_name,
                     "Attendance": False,
                     "Catering": False,
                     "CV_Attended": False,
@@ -357,7 +388,7 @@ try:
                 attended_raw = current_ops.get("Mentorship_Attended", "")
                 attended_topics = [t.strip() for t in attended_raw.split(',') if t.strip()] if attended_raw else []
 
-                with st.form(key=f"ops_form_{actual_uid}"):
+                with st.form(key=f"ops_form_{unique_tracker_id}"):
                     col_a, col_b, col_c, col_d = st.columns(4)
                     with col_a:
                         attendance_val = st.toggle("✅ الحضور (Attendance)", value=current_ops.get("Attendance", False))
@@ -377,7 +408,7 @@ try:
                                 checked = st.checkbox(
                                     topic,
                                     value=(topic in attended_topics),
-                                    key=f"mentor_{actual_uid}_{i}"
+                                    key=f"mentor_{unique_tracker_id}_{i}"
                                 )
                                 if checked:
                                     selected_mentorship_topics.append(topic)
@@ -387,7 +418,10 @@ try:
                     submitted = st.form_submit_button("💾 حفظ الحضور والأنشطة")
 
                 if submitted:
-                    ops_dict[actual_uid] = {
+                    ops_dict[unique_tracker_id] = {
+                        "Tracker_ID": unique_tracker_id,
+                        "UID": actual_uid,
+                        "Name": current_name,
                         "Attendance": attendance_val,
                         "Catering": catering_val,
                         "CV_Attended": cv_val,
@@ -396,11 +430,13 @@ try:
                     }
 
                     with st.spinner("جاري حفظ البيانات في Google Sheets..."):
-                        header = ["UID", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
+                        header = ["Tracker_ID", "UID", "Name", "Attendance", "Catering", "CV_Attended", "Mock_Attended", "Mentorship_Attended"]
                         data_to_upload = [header]
-                        for uid, vals in ops_dict.items():
+                        for tid, vals in ops_dict.items():
                             data_to_upload.append([
-                                uid,
+                                tid,
+                                vals["UID"],
+                                vals["Name"],
                                 str(vals["Attendance"]),
                                 str(vals["Catering"]),
                                 str(vals["CV_Attended"]),
